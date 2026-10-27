@@ -1,6 +1,7 @@
 [server]
-# image ZIPs can be large (MB)
-maxUploadSize = 1024
+# Max upload size in MB. Streamlit Cloud gives an app roughly 0.7-2.7 GB of RAM and the
+# ZIP is held in memory while it is unpacked, so keep this well below that.
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false
