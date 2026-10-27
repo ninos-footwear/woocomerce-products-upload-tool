@@ -8,12 +8,15 @@ import pandas as pd
 import streamlit as st
 
 import upload_runner as runner
+from folder_picker import pick_folder_names
 
 st.set_page_config(page_title="Ninos WooCommerce Upload Tool", page_icon="👟", layout="wide")
 
 st.title("Ninos WooCommerce Upload Tool")
-st.caption("Upload the raw inventory and the product images. The tool checks the data and builds the "
+st.caption("Upload the raw inventory and select the images folder. The tool checks the data and builds the "
            "WooCommerce import CSV (parent products + variations).")
+
+FOLDER, NAMES_FILE, ZIP = "Select images folder", "Upload image names file", "Upload ZIP of images"
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
 c1, c2 = st.columns(2)
@@ -23,14 +26,28 @@ with c1:
                                  type=["xlsx", "xlsm", "csv"], key="inventory")
 with c2:
     st.subheader("2. Product images")
-    images_zip = st.file_uploader('ZIP of all images, named like "N557 2.jpg", "N557 2 (2).jpg"',
-                                  type=["zip"], key="images")
+    source = st.radio("Images from", [FOLDER, NAMES_FILE, ZIP], horizontal=True, label_visibility="collapsed",
+                      help='Images must be named like "N557 2.jpg", "N557 2 (2).jpg". Only the names are '
+                           'needed to build the image URLs.')
+    picked, images_file = None, None
+    if source == FOLDER:
+        picked = pick_folder_names()
+        if picked:
+            where = f' in folder "{picked["folder"]}"' if picked.get("folder") else ""
+            st.success(f'{len(picked["names"])} file name(s) read{where}. Pick again to change.')
+    elif source == NAMES_FILE:
+        images_file = st.file_uploader("image_names.csv (made by list_image_names.py) or a .txt, one name per line",
+                                       type=["csv", "txt"], key="names_file")
+    else:
+        images_file = st.file_uploader("ZIP of all images (sub-folders are fine)", type=["zip"], key="images_zip")
 
-if not images_zip:
-    st.info("No images ZIP uploaded: you can still run, but every Images field will be blank.")
+have_images = bool(picked) or images_file is not None
+if not have_images:
+    st.info("No images selected yet: you can still run, but every Images field will be blank.")
 
-# Forget old results when the uploads change.
-upload_key = (inventory.file_id if inventory else None, images_zip.file_id if images_zip else None)
+# Forget old results when the inputs change.
+upload_key = (inventory.file_id if inventory else None, source,
+              picked.get("at") if picked else None, images_file.file_id if images_file else None)
 if st.session_state.get("upload_key") != upload_key:
     st.session_state.upload_key = upload_key
     st.session_state.result = None
@@ -38,7 +55,10 @@ if st.session_state.get("upload_key") != upload_key:
 if st.button("Process", type="primary", disabled=inventory is None):
     with st.spinner("Checking data and building the import file..."):
         st.session_state.result = runner.process(
-            inventory.getvalue(), inventory.name, images_zip.getvalue() if images_zip else None)
+            inventory.getvalue(), inventory.name,
+            images_bytes=images_file.getvalue() if images_file else None,
+            images_name=images_file.name if images_file else "images.zip",
+            image_names=picked["names"] if picked else None)
 
 result = st.session_state.get("result")
 if result is None:
@@ -53,8 +73,8 @@ elif result.status == "partial":
 else:
     st.error(f"❌ Failed — {result.message}")
 
-for note in result.zip_notes:
-    st.warning(f"Images ZIP: {note}")
+for note in result.image_notes:
+    st.warning(f"Images: {note}")
 
 s = result.summary
 if s:
