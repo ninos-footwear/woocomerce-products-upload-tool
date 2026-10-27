@@ -1,0 +1,6 @@
+[server]
+# image ZIPs can be large (MB)
+maxUploadSize = 1024
+
+[browser]
+gatherUsageStats = false
