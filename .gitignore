@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+# generated outputs
+*_validation.csv
+*_images.csv
+woocommerce_import_new.csv
