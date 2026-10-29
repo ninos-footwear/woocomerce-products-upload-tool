@@ -354,6 +354,21 @@ def summarize(pairs):
     return ' | '.join(f"{disp} (rows {fmt_ranges(rs)})" for disp, rs in groups.values())
 
 
+def newborn_split_ok(g):
+    """Business rule: a NewBorn article may appear under both NewBorn Boys and NewBorn Girls when
+    the two genders use different colors (e.g. a feminine color added under the Girls rows).
+    Requires: exactly those two genders, one product type, and no color name/code shared between them."""
+    genders = set(g['gender'].str.casefold())
+    if genders != {'newborn boys', 'newborn girls'} or g['sub_type'].str.casefold().nunique() != 1:
+        return False
+    boys, girls = (g[g['gender'].str.casefold() == k] for k in ('newborn boys', 'newborn girls'))
+    if set(boys['color'].str.casefold()) & set(girls['color'].str.casefold()):
+        return False
+    if set(boys['color_code']) & set(girls['color_code']):
+        return False
+    return True
+
+
 def validate(w, ignore_rules=()):
     """Returns (findings, quarantined_articles). ignore_rules is a test hook (never set by the CLI)."""
     findings, quarantined = [], {}
@@ -432,6 +447,13 @@ def validate(w, ignore_rules=()):
                                  ('category', 'MIXED_CATEGORY', 'item_category')):
             vals = g[col].dropna()
             if vals.str.casefold().nunique() > 1:
+                if col == 'gender' and newborn_split_ok(g):
+                    add('WARNING', 'NEWBORN_BOYS_GIRLS_SHARED_ARTICLE', a, g,
+                        'gender: ' + summarize(list(zip(g['row'], g['gender']))) + ' | colors: '
+                        + '; '.join(f"{gv}: {', '.join(sorted(set(g.loc[g['gender'] == gv, 'color'])))}" for gv in sorted(set(g['gender']))),
+                        'Allowed: NewBorn article sold in both genders with different colors per gender. One parent is created '
+                        '(Categories/Tags come from the first source row); confirm this is intended.')
+                    continue
                 add('ERROR', rule, a, g, f'{label}: ' + summarize(list(zip(g['row'], g[col].fillna('(blank)')))),
                     f'One article number must have one {label}. Correct the barcodes/descriptions of the wrong rows in the source '
                     f'file (no automatic split is applied).')
