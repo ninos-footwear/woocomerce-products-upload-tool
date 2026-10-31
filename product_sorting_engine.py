@@ -70,6 +70,7 @@ DESC_RE = re.compile(
     re.IGNORECASE
 )
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+IMG_EXTS = ('.jpg', '.jpeg')      # extensions the matcher accepts; .jpg is tried first (established), .jpeg added after the real folder used it
 
 
 class InputError(Exception):
@@ -159,16 +160,18 @@ class ImageIndex:
     def build_image_urls(self, article, color_code):
         base = f"{article} {color_code}"
         filenames = []
-        first = f"{base}.jpg"
-        if first in self.existing_files:
-            filenames.append(first)
-            n = 2
-            while True:
-                fname = f"{base} ({n}).jpg"
-                if fname not in self.existing_files:
-                    break
-                filenames.append(fname)
-                n += 1
+        for ext in IMG_EXTS:                       # the set uses the extension of its primary image
+            first = f"{base}{ext}"
+            if first in self.existing_files:
+                filenames.append(first)
+                n = 2
+                while True:
+                    fname = f"{base} ({n}){ext}"
+                    if fname not in self.existing_files:
+                        break
+                    filenames.append(fname)
+                    n += 1
+                break
         else:
             self.missing_images.add(base)
         return ', '.join(f"{BASE_URL}/{quote(wp_sanitize_filename(f))}" for f in filenames)
@@ -194,7 +197,7 @@ def diagnose_images(index, valid_bases, quarantined_bases):
 
     valid_norm = {_norm_base(b): b for b in valid_bases}
     quar_norm = {_norm_base(b): b for b in quarantined_bases}
-    primary, angles = set(), defaultdict(set)
+    primary, angles = defaultdict(set), defaultdict(set)     # primary[ext] = {bases}; angles[(base, ext)] = {n}
 
     for name in sorted(index.existing_files):
         path = os.path.join(index.images_dir, name)
@@ -207,9 +210,9 @@ def diagnose_images(index, valid_bases, quarantined_bases):
         if ext.lower() not in IMAGE_EXTS:
             add('INFO', 'NON_IMAGE_FILE', name, '', 'Not an image file; ignored.', 'None.')
             continue
-        exact = ext == '.jpg' and (n is None or n >= 2)
+        exact = ext in IMG_EXTS and (n is None or n >= 2)
         if exact and base in valid_bases:
-            (primary.add(base) if n is None else angles[base].add(n))
+            (primary[ext].add(base) if n is None else angles[(base, ext)].add(n))
             continue
         if exact and base in quarantined_bases:
             add('INFO', 'QUARANTINED_ARTICLE_IMAGE', name, base.split(' ')[0],
@@ -232,10 +235,13 @@ def diagnose_images(index, valid_bases, quarantined_bases):
             add('WARNING', 'UNMATCHED_FILE', name, '',
                 'No inventory article/color corresponds to this file.', 'Check for a typo or an unlisted product.')
 
+    jpeg_bases = []
     for base in sorted(valid_bases):
         art = base.split(' ')[0]
-        angs = sorted(angles.get(base, ()))
-        if base not in primary:
+        used = next((e for e in IMG_EXTS if base in primary[e]), None)
+        angs = (sorted(angles.get((base, used), ())) if used
+                else sorted(set().union(*(angles.get((base, e), set()) for e in IMG_EXTS))))
+        if used is None:
             add('WARNING', 'MISSING_IMAGE', f'{base}.jpg', art,
                 'Expected primary image not found; product/variation Images will be blank.',
                 f'Upload "{base}.jpg".')
@@ -244,6 +250,13 @@ def diagnose_images(index, valid_bases, quarantined_bases):
                     f'Angle(s) {angs} exist but are ignored because the primary image is missing.',
                     f'Upload "{base}.jpg".')
             continue
+        if used == '.jpeg':
+            jpeg_bases.append(base)
+        for e in IMG_EXTS:
+            if e != used and angles.get((base, e)):
+                add('WARNING', 'EXTENSION_MIX', base, art,
+                    f'Angle(s) {sorted(angles[(base, e)])} use {e} but the primary is {used}; the matcher ignores them.',
+                    'Use one extension per image set.')
         if angs:
             expected = list(range(2, max(angs) + 1))
             gaps = [k for k in expected if k not in angs]
@@ -258,6 +271,10 @@ def diagnose_images(index, valid_bases, quarantined_bases):
                     f'Angle(s) {gaps} missing between "(2)" and "({max(angs)})". '
                     f'Matcher uses {used or "none"} and ignores {dropped}.',
                     'Add the missing angle file(s) or renumber consecutively.')
+    if jpeg_bases:
+        add('INFO', 'JPEG_EXTENSION', f'{len(jpeg_bases)} image set(s)', '',
+            'These sets use .jpeg; their URLs keep the real extension (.jpeg).',
+            'Confirm the files on the WooCommerce server are also named .jpeg.')
     return rows
 
 
@@ -662,7 +679,7 @@ def run(input_file, output_file, images_dir, ignore_rules=()):
         if images.missing_images:
             print(f"⚠️  No images found for {len(images.missing_images)} article-color combo(s):")
             for base in sorted(images.missing_images):
-                print(f"   - {base}.jpg")
+                print(f"   - {base}.jpg (or .jpeg)")
         n_img = sum(1 for r in img_rows if r['severity'] == 'WARNING')
         print(f"   Image diagnostics: {n_img} warning(s) (see {img_path})")
     return summary, out, findings, img_rows, (2 if partial else 0)
