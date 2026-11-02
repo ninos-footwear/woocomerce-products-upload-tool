@@ -20,13 +20,15 @@ data-integrity validation with quarantine, a structural self-check, and image di
 import os
 import re
 import sys
+from datetime import datetime
 from collections import OrderedDict, defaultdict
 from itertools import cycle
 from urllib.parse import quote
 
 import pandas as pd
 
-BASE_URL = "https://api.ninosfootwear.com/wp-content/uploads/2026/07"
+currentMonth = datetime.now().strftime("%m")      # zero-padded like WordPress upload folders, e.g. "11"
+BASE_URL = f"https://api.ninosfootwear.com/wp-content/uploads/2026/{currentMonth}"
 
 REQUIRED_COLUMNS = [
     'barcode*', 'Item name*', 'long Desc', 'unit of measurement*',
