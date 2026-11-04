@@ -23,6 +23,7 @@ import pandas as pd
 import product_sorting_engine as engine
 
 OUTPUT_NAME = "woocommerce_import_new.csv"
+IMAGE_NAMES_NAME = "image_names.csv"        # names of all images received (same format as list_image_names.py)
 MAX_UNZIPPED_BYTES = 2 * 1024 ** 3          # refuse ZIPs that expand beyond 2 GB
 MAX_NAMES = 200_000                         # refuse absurdly long name lists
 NAME_LIST_EXTS = ('.csv', '.txt')
@@ -41,6 +42,7 @@ class RunResult:
     log: str = ''                            # engine console output
     image_notes: list = field(default_factory=list)
     images_provided: bool = False
+    image_names: pd.DataFrame = None         # one row per image name received (None if no images given)
     files: dict = field(default_factory=dict)  # file name -> bytes, ready to download
 
 
@@ -133,6 +135,16 @@ def _read(path):
         return f.read()
 
 
+def names_csv(images_dir):
+    """CSV (bytes) + DataFrame of every image name in `images_dir`, i.e. what the engine will match against."""
+    names = sorted(os.listdir(images_dir), key=str.casefold) if os.path.isdir(images_dir) else []
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator='\n')
+    w.writerow(['filename'])
+    w.writerows([n] for n in names)
+    return buf.getvalue().encode('utf-8-sig'), pd.DataFrame({'filename': names})   # BOM: Excel shows names right
+
+
 def process(inventory_bytes, inventory_name, images_bytes=None, images_name='images.zip', image_names=None):
     """Run the engine on uploaded data. Never raises for user-input problems.
 
@@ -149,6 +161,15 @@ def process(inventory_bytes, inventory_name, images_bytes=None, images_name='ima
 
         images_dir = os.path.join(tmp, 'images')
         image_notes = []
+        images_provided = image_names is not None or images_bytes is not None
+        names_files, names_df = {}, None
+
+        def collect_names():                 # list of the images received, also kept when the run fails later
+            nonlocal names_files, names_df
+            if images_provided and os.path.isdir(images_dir):
+                data, names_df = names_csv(images_dir)
+                names_files = {IMAGE_NAMES_NAME: data}
+
         try:
             if image_names is not None:
                 os.makedirs(images_dir)
@@ -161,19 +182,22 @@ def process(inventory_bytes, inventory_name, images_bytes=None, images_name='ima
                     image_notes = create_placeholders(read_name_list(images_bytes, images_name), images_dir)
                 else:
                     image_notes = extract_images(images_bytes, images_dir)
+            collect_names()
             output_path = os.path.join(tmp, OUTPUT_NAME)
             # Capturing stdout also keeps the engine's emoji output away from the Windows console.
             with redirect_stdout(log):
                 summary, out, findings, img_rows, code = engine.run(input_path, output_path, images_dir)
         except engine.InputError as e:
             message = str(e).replace(input_path, inventory_name)     # hide the temp path
-            return RunResult(status='failed', exit_code=1, message=message, log=log.getvalue(), image_notes=image_notes)
+            return RunResult(status='failed', exit_code=1, message=message, log=log.getvalue(), image_notes=image_notes,
+                             files=names_files, images_provided=images_provided, image_names=names_df)
 
         val_path, img_path = engine.report_paths(output_path)
         files = {}
         for path in (output_path, val_path, img_path):
             if os.path.isfile(path):
                 files[os.path.basename(path)] = _read(path)
+        files.update(names_files)
 
     findings_df = pd.read_csv(io.BytesIO(files[os.path.basename(val_path)]), dtype=str).fillna('')
     images_df = pd.read_csv(io.BytesIO(files[os.path.basename(img_path)]), dtype=str).fillna('')
@@ -187,7 +211,7 @@ def process(inventory_bytes, inventory_name, images_bytes=None, images_name='ima
     return RunResult(status=status, exit_code=code, message=message, summary=summary,
                      output=out if code != 1 else None, findings=findings_df, images=images_df,
                      log=log.getvalue(), image_notes=image_notes, files=files,
-                     images_provided=image_names is not None or images_bytes is not None)
+                     images_provided=images_provided, image_names=names_df)
 
 
 def bundle(files):

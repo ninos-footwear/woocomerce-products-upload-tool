@@ -106,19 +106,21 @@ if result.files:
     stem = runner.OUTPUT_NAME[:-4]
     buttons = [(runner.OUTPUT_NAME, "Import CSV"),
                (f"{stem}_validation.csv", "Validation report"),
-               (f"{stem}_images.csv", "Image report")]
-    d = st.columns(4)
+               (f"{stem}_images.csv", "Image report"),
+               (runner.IMAGE_NAMES_NAME, f"Image names ({len(result.image_names)})"
+                                          if result.image_names is not None else "Image names")]
+    d = st.columns(5)
     for col, (name, label) in zip(d, buttons):
         if name in result.files:
             col.download_button(label, result.files[name], name, "text/csv",
                                 type="primary" if name == runner.OUTPUT_NAME else "secondary")
-    d[3].download_button("All files (ZIP)", runner.bundle(result.files), "ninos_outputs.zip", "application/zip")
+    d[4].download_button("All files (ZIP)", runner.bundle(result.files), "ninos_outputs.zip", "application/zip")
     if result.images_provided:
-        st.caption("Image URLs point to the WordPress uploads folder (2026/07). Upload the same image files "
+        st.caption(f"Image URLs point to {runner.engine.BASE_URL}/. Upload the same image files "
                    "to the WordPress media library before importing the CSV.")
 
 # ── Details ──────────────────────────────────────────────────────────────────
-tabs = st.tabs(["Import CSV preview", "Validation report", "Image report", "Log"])
+tabs = st.tabs(["Import CSV preview", "Validation report", "Image report", "Image names", "Log"])
 with tabs[0]:
     if result.output is not None and len(result.output):
         st.dataframe(result.output, hide_index=True)
@@ -135,4 +137,11 @@ with tabs[2]:
     else:
         st.write("No image findings.")
 with tabs[3]:
+    if result.image_names is not None and len(result.image_names):
+        st.dataframe(result.image_names, hide_index=True)
+    elif result.images_provided:
+        st.write("No image names were received.")
+    else:
+        st.write("No images were selected.")
+with tabs[4]:
     st.code(result.log or "(no output)", language=None)
